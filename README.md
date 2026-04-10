@@ -1,6 +1,6 @@
 # nshcpuset - Windows Efficiency Core Troubleshooting
 
-The follwing information and simple test and troubleshooting tool has been written to troubleshoot and fix a HCL Notes Client issue I came accross.
+The follwing information and simple tool has been written to troubleshoot and fix a HCL Notes Client issue I came accross.
 For multiple weeks I have been hunting a performance problem on my Thinkpad T41 with a modern CPU.
 
 It turns out that modern CPUs with a combination of E-Cores and P-Cores can cause weird performance problems.
@@ -10,14 +10,15 @@ But this might not always workout when an application has mixed a mixed workload
 Other applications like VMware workstation also had to make adjustments for running with CPUs which have a mix of E-Cores and P-Cores.
 
 In my special case the rendering performance in my Notes Client dropped dramatically during Sametime calls and other a bit more demanding operations.
-You could really watch the client painting Windows.
+You could really watch the client painting Windows in slow motion.
 
 Windows 11 provides new APIs to allow applications let Windows know that a thread in an application is better suited for a P-Core.
 This functionality would need to be build into the application.
 
-Because HCL Notes and other applications don't use those type of hints for Windows I did some research to find a temporary work-around for my own environment.
-Setting the P-Core affinity for my Notes Basic Client really helped. And the same should work for the Standard Client.
+It looks like HCL Notes and other applications don't use those type of hints for Windows.
+I did some research to find a temporary work-around for my own environment after looking into all other settings, driver updates including GPU driver and settings.
 
+Setting the P-Core affinity for my Notes Basic Client really helped. And the same should work for the Standard Client.
 Below are the details behind the issue and the available APIs.
 
 # Hybrid CPUs on Windows: How to Prefer Performance Cores (P-Cores)
@@ -25,7 +26,7 @@ Below are the details behind the issue and the available APIs.
 Modern CPUs (Intel hybrid, increasingly others) combine Performance cores (P-cores) and Efficiency cores (E-cores).
 Windows uses a sophisticated scheduler (with help from Intel Thread Director on supported systems) to decide where threads run.
 
-The key point:
+The key point: 
 
 Applications cannot directly choose cores, but they can strongly influence scheduling behavior.
 
