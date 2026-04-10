@@ -3,26 +3,27 @@
 The follwing information and simple test and troubleshooting tool has been written to troubleshoot and fix a HCL Notes Client issue I came accross.
 For multiple weeks I have been hunting a performance problem on my Thinkpad T41 with a modern CPU.
 
-It turns out that modern CPU with a combination of E-Cores and P-Cores can cause weird performance problems.
-Windows tries to schedule processes (and acutally threads) on the cores which should best fit the application need.
+It turns out that modern CPUs with a combination of E-Cores and P-Cores can cause weird performance problems.
+Windows "tries" to schedule processes (and acutally threads) on the cores which should best fit the application need.
 But this might not always workout when an application has mixed a mixed workload.
 
 Other applications like VMware workstation also had to make adjustments for running with CPUs which have a mix of E-Cores and P-Cores.
 
 In my special case the rendering performance in my Notes Client dropped dramatically during Sametime calls and other a bit more demanding operations.
+You could really watch the client painting Windows.
 
 Windows 11 provides new APIs to allow applications let Windows know that a thread in an application is better suited for a P-Core.
 This functionality would need to be build into the application.
 
-Because HCL Note and other applications don't use those type of hints for Windows I did some research to find a temporary work-around for my own environment.
+Because HCL Notes and other applications don't use those type of hints for Windows I did some research to find a temporary work-around for my own environment.
 Setting the P-Core affinity for my Notes Basic Client really helped. And the same should work for the Standard Client.
 
 Below are the details behind the issue and the available APIs.
 
 # Hybrid CPUs on Windows: How to Prefer Performance Cores (P-Cores)
 
-Modern CPUs (Intel hybrid, increasingly others) combine Performance cores (P-cores) and Efficiency cores (E-cores). Windows uses a sophisticated scheduler
-(with help from Intel Thread Director on supported systems) to decide where threads run.
+Modern CPUs (Intel hybrid, increasingly others) combine Performance cores (P-cores) and Efficiency cores (E-cores).
+Windows uses a sophisticated scheduler (with help from Intel Thread Director on supported systems) to decide where threads run.
 
 The key point:
 
@@ -163,8 +164,18 @@ Example:
 
 ```powershell
 $p = Get-Process myapp
-$p.ProcessorAffinity = 0x00FF
+$p.ProcessorAffinity = 0x00F
 ```
+
+Or when starting the process
+
+```
+cmd /c "start /affinity F myapp.exe"
+```
+
+The key challenge here is to find out which cores are the P-Cores and what affinity mask this results in.
+It's acutally not that easy to find out which cores are the P-Cores.
+There are extranal tools to help. But you can also use Windows API as shown in the small tool below.
 
 ### What this achieves:
 
@@ -249,7 +260,8 @@ The most deterministic results come from overriding it (affinity or CPU sets).
 
 # Example: External P-Core Mapping Tool
 
-The following tool demonstrates a practical external approach to steer selected processes toward P-cores using modern Windows APIs.
+The following simple tool **nshcpuset** demonstrates a practical external approach to steer selected processes toward P-cores using modern Windows APIs.
+The better approach would be that the application tells Windows which threads need the faster P-Cores -- For example for UI operations.
 
 ## Overview
 
@@ -384,8 +396,36 @@ This approach is useful when:
 Typical usage:
 
 ```
-tool.exe -set domino
-tool.exe -set notes,java
+nshcpuset.exe -set domino
+nshcpuset.exe -set notes,java
+```
+
+Example Output:
+
+```
+nshcpuset.exe -set nlnotes.exe
+
+CPU layout:
+----------------------------------------
+CPU  0 -> EfficiencyClass=1 (P-core)
+CPU  1 -> EfficiencyClass=1 (P-core)
+CPU  2 -> EfficiencyClass=1 (P-core)
+CPU  3 -> EfficiencyClass=1 (P-core)
+CPU  4 -> EfficiencyClass=0 (E-core)
+CPU  5 -> EfficiencyClass=0 (E-core)
+CPU  6 -> EfficiencyClass=0 (E-core)
+CPU  7 -> EfficiencyClass=0 (E-core)
+CPU  8 -> EfficiencyClass=0 (E-core)
+CPU  9 -> EfficiencyClass=0 (E-core)
+CPU 10 -> EfficiencyClass=0 (E-core)
+CPU 11 -> EfficiencyClass=0 (E-core)
+
+P-Cores : 4
+E-Cores : 8
+
+Applying to nlnotes.exe PID=24404
+Adjust priority for PID=24404
+Applied P-core preference to PID=24404 (4 cores)
 ```
 
 ## Relevant Windows APIs
@@ -404,7 +444,7 @@ For readers who want to explore further:
 
 ## Summary
 
-This tool represents a practical “Plan B”:
+This simple tool represents a practical “Plan B”:
 
 * Instead of relying on applications to provide QoS hints
 * It enforces P-core usage externally using CPU Sets
