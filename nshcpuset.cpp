@@ -1,4 +1,7 @@
-#define _CRT_SECURE_NO_WARNINGS
+
+#define VERSION "1.0.0"
+
+#define _CRT_SECURE_NO_WARNINGS // OK here for a test tool
 #define _WIN32_WINNT 0x0A00
 
 #include <windows.h>
@@ -23,8 +26,8 @@ typedef struct
     ULONG efficiencyClass;
 } CPU_ENTRY;
 
-CPU_ENTRY CpuList[MAX_CPUSETS] = {0};
-ULONG CpuCount = 0;
+CPU_ENTRY gCpuList[MAX_CPUSETS] = {0};
+ULONG gCpuCount = 0;
 
 /* -------------------------------------------------- */
 /* CPU SET DETECTION                                  */
@@ -51,10 +54,10 @@ void CollectCpuSets()
 
         if (info->Type == CpuSetInformation)
         {
-            CpuList[CpuCount].id = info->CpuSet.Id;
-            CpuList[CpuCount].logicalIndex = info->CpuSet.LogicalProcessorIndex;
-            CpuList[CpuCount].efficiencyClass = info->CpuSet.EfficiencyClass;
-            CpuCount++;
+            gCpuList[gCpuCount].id = info->CpuSet.Id;
+            gCpuList[gCpuCount].logicalIndex = info->CpuSet.LogicalProcessorIndex;
+            gCpuList[gCpuCount].efficiencyClass = info->CpuSet.EfficiencyClass;
+            gCpuCount++;
         }
 
         ptr += info->Size;
@@ -67,14 +70,14 @@ ULONG FindMaxEfficiency()
 {
     ULONG max = 0;
 
-    for (ULONG i = 0; i < CpuCount; i++)
-        if (CpuList[i].efficiencyClass > max)
-            max = CpuList[i].efficiencyClass;
+    for (ULONG i = 0; i < gCpuCount; i++)
+        if (gCpuList[i].efficiencyClass > max)
+            max = gCpuList[i].efficiencyClass;
 
     return max;
 }
 
-void PrintCpuInfo(ULONG maxClass)
+void PrintCpuInfo(ULONG MaxClass)
 {
     size_t Count_ECore = 0;
     size_t Count_PCore = 0;
@@ -82,14 +85,14 @@ void PrintCpuInfo(ULONG maxClass)
     printf("\nCPU layout:\n");
     printf("----------------------------------------\n");
 
-    for (ULONG i = 0; i < CpuCount; i++)
+    for (ULONG i = 0; i < gCpuCount; i++)
     {
         printf("CPU %2lu -> EfficiencyClass=%lu %s\n",
-               CpuList[i].logicalIndex,
-               CpuList[i].efficiencyClass,
-               (CpuList[i].efficiencyClass == maxClass) ? "(P-core)" : "(E-core)");
+               gCpuList[i].logicalIndex,
+               gCpuList[i].efficiencyClass,
+               (gCpuList[i].efficiencyClass == MaxClass) ? "(P-core)" : "(E-core)");
 
-        if (CpuList[i].efficiencyClass == maxClass)
+        if (gCpuList[i].efficiencyClass == MaxClass)
             Count_PCore++;
         else
             Count_ECore++;
@@ -106,10 +109,10 @@ void PrintCpuInfo(ULONG maxClass)
 int GetCompanyName(const char *pszPath, char *out, size_t outSize)
 {
     int   ret   = 0;
-    DWORD dummy = 0;
-    DWORD size = GetFileVersionInfoSizeA(pszPath, &dummy);
+    DWORD dwDummy = 0;
+    DWORD dwSize = GetFileVersionInfoSizeA(pszPath, &dwDummy);
     UINT len = 0;
-    char szSubBlock[256] = {0};
+    char szSubBlock[2048] = {0};
     char *pCompany = NULL;
 
     BYTE *pBuffer = NULL;
@@ -120,12 +123,12 @@ int GetCompanyName(const char *pszPath, char *out, size_t outSize)
         WORD wCodePage;
     } *lpTranslate;
 
-    if (size == 0)
+    if (dwSize == 0)
         return 0;
 
-    pBuffer = (BYTE *) malloc(size);
+    pBuffer = (BYTE *) malloc(dwSize);
 
-    if (!GetFileVersionInfoA(pszPath, 0, size, pBuffer))
+    if (!GetFileVersionInfoA(pszPath, 0, dwSize, pBuffer))
     {
         goto Done;
     }
@@ -169,7 +172,7 @@ Done:
 int GetSigner(const wchar_t *pswzPath, char *out, size_t outSize)
 {
     HCERTSTORE hStore = NULL;
-    HCRYPTMSG hMsg = NULL;
+    HCRYPTMSG hMsg    = NULL;
     DWORD encoding, contentType, formatType;
 
     if (!CryptQueryObject(
@@ -232,12 +235,52 @@ int GetSigner(const wchar_t *pswzPath, char *out, size_t outSize)
     return 1;
 }
 
+
+const char* PriorityToString(DWORD p)
+{
+    switch (p)
+    {
+        case IDLE_PRIORITY_CLASS: return "IDLE";
+        case BELOW_NORMAL_PRIORITY_CLASS: return "BELOW_NORMAL";
+        case NORMAL_PRIORITY_CLASS: return "NORMAL";
+        case ABOVE_NORMAL_PRIORITY_CLASS: return "ABOVE_NORMAL";
+        case HIGH_PRIORITY_CLASS: return "HIGH";
+        case REALTIME_PRIORITY_CLASS: return "REALTIME";
+        default: return "UNKNOWN";
+    }
+}
+
+
 /* -------------------------------------------------- */
 /* APPLY CPU SETS                                     */
 /* -------------------------------------------------- */
 
-void SetProcessPCores(DWORD pid, ULONG maxClass)
+int cmp_ulong(const void *a, const void *b)
 {
+    ULONG x = *(const ULONG *)a;
+    ULONG y = *(const ULONG *)b;
+
+    if (x < y) return -1;
+    if (x > y) return 1;
+    return 0;
+}
+
+/* -------------------------------------------------- */
+/* APPLY CPU SETS                                     */
+/* -------------------------------------------------- */
+
+void SetProcessPCores(DWORD pid, ULONG MaxClass, DWORD NewPriorityClass)
+{
+    ULONG SetIDs[MAX_CPUSETS] = {0};
+    ULONG GetIDs[MAX_CPUSETS] = {0};
+
+    ULONG NewCount = 0;
+    ULONG CurrentCount = 0;
+    ULONG Needed = 0;
+
+    DWORD dwCurrentPriorityClass = 0;
+    BOOL  fNeedsUpdate = FALSE;
+
     HANDLE hProc = OpenProcess(PROCESS_SET_INFORMATION | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
 
     if (!hProc)
@@ -246,32 +289,98 @@ void SetProcessPCores(DWORD pid, ULONG maxClass)
         return;
     }
 
-    // --- Set priority ---
-    if (!SetPriorityClass(hProc, ABOVE_NORMAL_PRIORITY_CLASS))
+    /* ---------------- Priority ---------------- */
+
+    dwCurrentPriorityClass = GetPriorityClass(hProc);
+
+    if (dwCurrentPriorityClass == 0)
     {
-        printf("SetPriorityClass failed PID=%lu (%lu)\n", pid, GetLastError());
+        printf("GetPriorityClass failed (%lu)\n", GetLastError());
+    }
+    else if (NewPriorityClass == dwCurrentPriorityClass)
+    {
+        printf("Priority for PID=%lu is already %s\n",
+               pid, PriorityToString(dwCurrentPriorityClass));
     }
     else
     {
-        printf("Adjust priority for PID=%lu\n", pid);
+        if (!SetPriorityClass(hProc, NewPriorityClass))
+        {
+            printf("SetPriorityClass failed PID=%lu (%lu)\n", pid, GetLastError());
+        }
+        else
+        {
+            printf("Adjust priority for PID=%lu (%s -> %s)\n",
+                   pid,
+                   PriorityToString(dwCurrentPriorityClass),
+                   PriorityToString(NewPriorityClass));
+        }
     }
 
-    // --- Set CPU Sets ---
-    ULONG ids[MAX_CPUSETS];
-    ULONG count = 0;
+    /* ---------------- Build desired CPU set ---------------- */
 
-    for (ULONG i = 0; i < CpuCount; i++)
-        if (CpuList[i].efficiencyClass == maxClass)
-            ids[count++] = CpuList[i].id;
-
-    if (!SetProcessDefaultCpuSets(hProc, ids, count))
+    for (ULONG i = 0; i < gCpuCount; i++)
     {
-        printf("SetProcessDefaultCpuSets failed PID=%lu (%lu)\n", pid, GetLastError());
+        if (gCpuList[i].efficiencyClass == MaxClass)
+        {
+            SetIDs[NewCount++] = gCpuList[i].id;
+        }
+    }
+
+    /* ---------------- Query current CPU sets ---------------- */
+
+    if (!GetProcessDefaultCpuSets(hProc, GetIDs, MAX_CPUSETS, &CurrentCount))
+    {
+        printf("GetProcessDefaultCpuSets failed (%lu)\n", GetLastError());
+        goto Done;
+    }
+
+    /* ---------------- Compare ---------------- */
+
+    if (CurrentCount == 0)
+    {
+        printf("Process PID=%lu currently unrestricted (all CPUs allowed)\n", pid);
+        fNeedsUpdate = TRUE;
+    }
+    else if (CurrentCount != NewCount)
+    {
+        fNeedsUpdate = TRUE;
     }
     else
     {
-        printf("Applied P-core preference to PID=%lu (%lu cores)\n", pid, count);
+        /* sort both arrays before comparing */
+        qsort(SetIDs, NewCount, sizeof(ULONG), cmp_ulong);
+        qsort(GetIDs, CurrentCount, sizeof(ULONG), cmp_ulong);
+
+        for (ULONG i = 0; i < NewCount; i++)
+        {
+            if (SetIDs[i] != GetIDs[i])
+            {
+                fNeedsUpdate = TRUE;
+                break;
+            }
+        }
     }
+
+    /* ---------------- Apply if needed ---------------- */
+
+    if (fNeedsUpdate)
+    {
+        if (!SetProcessDefaultCpuSets(hProc, SetIDs, NewCount))
+        {
+            printf("SetProcessDefaultCpuSets failed PID=%lu (%lu)\n", pid, GetLastError());
+        }
+        else
+        {
+            printf("Applied P-core preference to PID=%lu (%lu cores)\n", pid, NewCount);
+        }
+    }
+    else
+    {
+        printf("P-core preference for PID=%lu already set (%lu cores)\n", pid, NewCount);
+    }
+
+Done:
 
     CloseHandle(hProc);
 }
@@ -334,10 +443,13 @@ void ScanHCL()
 /* -------------------------------------------------- */
 /* MODE: SET                                          */
 /* -------------------------------------------------- */
-void setByName(char *filter, ULONG maxClass)
+void SetByName(char *pszFilter, ULONG MaxClass, DWORD NewPriorityClass)
 {
     PROCESSENTRY32 pe;
     pe.dwSize = sizeof(pe);
+
+    if (NULL == pszFilter)
+        return;
 
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
 
@@ -345,10 +457,10 @@ void setByName(char *filter, ULONG maxClass)
     {
         do
         {
-            if (StrStrIA(pe.szExeFile, filter))
+            if (StrStrIA(pe.szExeFile, pszFilter))
             {
-                printf("Applying to %s PID=%lu\n", pe.szExeFile, pe.th32ProcessID);
-                SetProcessPCores(pe.th32ProcessID, maxClass);
+                printf("\n--- %s PID=%lu ---\n", pe.szExeFile, pe.th32ProcessID);
+                SetProcessPCores(pe.th32ProcessID, MaxClass, NewPriorityClass);
             }
 
         } while (Process32Next(snap, &pe));
@@ -362,6 +474,10 @@ void setByName(char *filter, ULONG maxClass)
 /* -------------------------------------------------- */
 int main(int argc, char *argv[])
 {
+    DWORD NewPriorityClass = ABOVE_NORMAL_PRIORITY_CLASS;
+
+    printf ("\nnshCpuSet %s\n\n", VERSION);
+
     if (argc < 2)
     {
         printf("Usage:\n");
@@ -371,8 +487,8 @@ int main(int argc, char *argv[])
     }
 
     CollectCpuSets();
-    ULONG maxClass = FindMaxEfficiency();
-    PrintCpuInfo(maxClass);
+    ULONG MaxClass = FindMaxEfficiency();
+    PrintCpuInfo(MaxClass);
 
     printf ("\n");
 
@@ -387,7 +503,7 @@ int main(int argc, char *argv[])
 
         while (token)
         {
-            setByName(token, maxClass);
+            SetByName(token, MaxClass, NewPriorityClass);
             token = strtok(NULL, ",");
             printf ("\n");
         }
