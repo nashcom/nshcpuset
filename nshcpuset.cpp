@@ -23,8 +23,8 @@ typedef struct
     ULONG efficiencyClass;
 } CPU_ENTRY;
 
-CPU_ENTRY cpuList[MAX_CPUSETS];
-ULONG cpuCount = 0;
+CPU_ENTRY CpuList[MAX_CPUSETS] = {0};
+ULONG CpuCount = 0;
 
 /* -------------------------------------------------- */
 /* CPU SET DETECTION                                  */
@@ -34,15 +34,15 @@ void CollectCpuSets()
     ULONG len = 0;
     GetSystemCpuSetInformation(NULL, 0, &len, NULL, 0);
 
-    PSYSTEM_CPU_SET_INFORMATION buffer = (PSYSTEM_CPU_SET_INFORMATION) malloc(len);
+    PSYSTEM_CPU_SET_INFORMATION pBuffer = (PSYSTEM_CPU_SET_INFORMATION) malloc(len);
 
-    if (!GetSystemCpuSetInformation(buffer, len, &len, NULL, 0))
+    if (!GetSystemCpuSetInformation(pBuffer, len, &len, NULL, 0))
     {
         printf("GetSystemCpuSetInformation failed\n");
         exit(1);
     }
 
-    BYTE *ptr = (BYTE *)buffer;
+    BYTE *ptr = (BYTE *)pBuffer;
     BYTE *end = ptr + len;
 
     while (ptr < end)
@@ -51,25 +51,25 @@ void CollectCpuSets()
 
         if (info->Type == CpuSetInformation)
         {
-            cpuList[cpuCount].id = info->CpuSet.Id;
-            cpuList[cpuCount].logicalIndex = info->CpuSet.LogicalProcessorIndex;
-            cpuList[cpuCount].efficiencyClass = info->CpuSet.EfficiencyClass;
-            cpuCount++;
+            CpuList[CpuCount].id = info->CpuSet.Id;
+            CpuList[CpuCount].logicalIndex = info->CpuSet.LogicalProcessorIndex;
+            CpuList[CpuCount].efficiencyClass = info->CpuSet.EfficiencyClass;
+            CpuCount++;
         }
 
         ptr += info->Size;
     }
 
-    free(buffer);
+    free(pBuffer);
 }
 
 ULONG FindMaxEfficiency()
 {
     ULONG max = 0;
 
-    for (ULONG i = 0; i < cpuCount; i++)
-        if (cpuList[i].efficiencyClass > max)
-            max = cpuList[i].efficiencyClass;
+    for (ULONG i = 0; i < CpuCount; i++)
+        if (CpuList[i].efficiencyClass > max)
+            max = CpuList[i].efficiencyClass;
 
     return max;
 }
@@ -82,14 +82,14 @@ void PrintCpuInfo(ULONG maxClass)
     printf("\nCPU layout:\n");
     printf("----------------------------------------\n");
 
-    for (ULONG i = 0; i < cpuCount; i++)
+    for (ULONG i = 0; i < CpuCount; i++)
     {
         printf("CPU %2lu -> EfficiencyClass=%lu %s\n",
-               cpuList[i].logicalIndex,
-               cpuList[i].efficiencyClass,
-               (cpuList[i].efficiencyClass == maxClass) ? "(P-core)" : "(E-core)");
+               CpuList[i].logicalIndex,
+               CpuList[i].efficiencyClass,
+               (CpuList[i].efficiencyClass == maxClass) ? "(P-core)" : "(E-core)");
 
-        if (cpuList[i].efficiencyClass == maxClass)
+        if (CpuList[i].efficiencyClass == maxClass)
             Count_PCore++;
         else
             Count_ECore++;
@@ -103,21 +103,16 @@ void PrintCpuInfo(ULONG maxClass)
 /* -------------------------------------------------- */
 /* VERSION INFO (Company)                             */
 /* -------------------------------------------------- */
-int GetCompanyName(const char *path, char *out, size_t outSize)
+int GetCompanyName(const char *pszPath, char *out, size_t outSize)
 {
-    DWORD dummy;
-    DWORD size = GetFileVersionInfoSizeA(path, &dummy);
+    int   ret   = 0;
+    DWORD dummy = 0;
+    DWORD size = GetFileVersionInfoSizeA(pszPath, &dummy);
+    UINT len = 0;
+    char szSubBlock[256] = {0};
+    char *pCompany = NULL;
 
-    if (size == 0)
-        return 0;
-
-    BYTE *buffer = (BYTE *) malloc(size);
-
-    if (!GetFileVersionInfoA(path, 0, size, buffer))
-    {
-        free(buffer);
-        return 0;
-    }
+    BYTE *pBuffer = NULL;
 
     struct LANGANDCODEPAGE
     {
@@ -125,42 +120,53 @@ int GetCompanyName(const char *path, char *out, size_t outSize)
         WORD wCodePage;
     } *lpTranslate;
 
-    UINT len;
+    if (size == 0)
+        return 0;
 
-    if (!VerQueryValueA(buffer,
+    pBuffer = (BYTE *) malloc(size);
+
+    if (!GetFileVersionInfoA(pszPath, 0, size, pBuffer))
+    {
+        goto Done;
+    }
+
+    if (!VerQueryValueA(pBuffer,
                         "\\VarFileInfo\\Translation",
                         (LPVOID *)&lpTranslate,
                         &len))
     {
-        free(buffer);
-        return 0;
+        goto Done;
     }
 
-    char subBlock[256];
-    sprintf(subBlock,
+    sprintf(szSubBlock,
             "\\StringFileInfo\\%04x%04x\\CompanyName",
             lpTranslate[0].wLanguage,
             lpTranslate[0].wCodePage);
 
-    char *company = NULL;
-
-    if (VerQueryValueA(buffer, subBlock, (LPVOID *)&company, &len))
+    if (VerQueryValueA(pBuffer, szSubBlock, (LPVOID *)&pCompany, &len))
     {
-        strncpy(out, company, outSize - 1);
+        strncpy(out, pCompany, outSize - 1);
         out[outSize - 1] = 0;
 
-        free(buffer);
-        return 1;
+        ret = 1;
+        goto Done;
     }
 
-    free(buffer);
+Done:
+
+    if (pBuffer)
+    {
+        free(pBuffer);
+        pBuffer = NULL;
+    }
+
     return 0;
 }
 
 /* -------------------------------------------------- */
 /* SIGNER                                             */
 /* -------------------------------------------------- */
-int GetSigner(const wchar_t *path, char *out, size_t outSize)
+int GetSigner(const wchar_t *pswzPath, char *out, size_t outSize)
 {
     HCERTSTORE hStore = NULL;
     HCRYPTMSG hMsg = NULL;
@@ -168,7 +174,7 @@ int GetSigner(const wchar_t *path, char *out, size_t outSize)
 
     if (!CryptQueryObject(
             CERT_QUERY_OBJECT_FILE,
-            path,
+            pswzPath,
             CERT_QUERY_CONTENT_FLAG_PKCS7_SIGNED_EMBED,
             CERT_QUERY_FORMAT_FLAG_BINARY,
             0,
@@ -254,9 +260,9 @@ void SetProcessPCores(DWORD pid, ULONG maxClass)
     ULONG ids[MAX_CPUSETS];
     ULONG count = 0;
 
-    for (ULONG i = 0; i < cpuCount; i++)
-        if (cpuList[i].efficiencyClass == maxClass)
-            ids[count++] = cpuList[i].id;
+    for (ULONG i = 0; i < CpuCount; i++)
+        if (CpuList[i].efficiencyClass == maxClass)
+            ids[count++] = CpuList[i].id;
 
     if (!SetProcessDefaultCpuSets(hProc, ids, count))
     {
@@ -288,22 +294,22 @@ void ScanHCL()
             if (!hProc)
                 continue;
 
-            char path[MAX_PATH];
+            char pszPath[MAX_PATH+1] = {0};
             DWORD size = MAX_PATH;
 
-            if (QueryFullProcessImageNameA(hProc, 0, path, &size))
+            if (QueryFullProcessImageNameA(hProc, 0, pszPath, &size))
             {
-                char company[256] = {0};
-                char signer[256] = {0};
+                char pCompany[256] = {0};
+                char signer[256]   = {0};
 
                 int match = 0;
 
-                if (GetCompanyName(path, company, sizeof(company)))
-                    if (StrStrIA(company, "HCL") || StrStrIA(company, "IBM"))
+                if (GetCompanyName(pszPath, pCompany, sizeof(pCompany)))
+                    if (StrStrIA(pCompany, "HCL") || StrStrIA(pCompany, "IBM"))
                         match = 1;
 
                 wchar_t wpath[MAX_PATH];
-                MultiByteToWideChar(CP_UTF8, 0, path, -1, wpath, MAX_PATH);
+                MultiByteToWideChar(CP_UTF8, 0, pszPath, -1, wpath, MAX_PATH);
 
                 if (GetSigner(wpath, signer, sizeof(signer)))
                     if (StrStrIA(signer, "HCL") || StrStrIA(signer, "IBM"))
@@ -312,7 +318,7 @@ void ScanHCL()
                 if (match)
                 {
                     printf("Matched: %-20s PID=%lu\n", pe.szExeFile, pe.th32ProcessID);
-                    printf("  Company: %s\n", company);
+                    printf("  Company: %s\n", pCompany);
                     printf("  Signer : %s\n\n", signer);
                 }
             }
@@ -359,8 +365,8 @@ int main(int argc, char *argv[])
     if (argc < 2)
     {
         printf("Usage:\n");
-        printf("  -scan              List HCL processes\n");
-        printf("  -set <name>        Apply to process name or substring\n");
+        printf("  -scan        List HCL processes\n");
+        printf("  -set <name>  Apply to process name or substring\n");
         return 0;
     }
 
@@ -389,3 +395,4 @@ int main(int argc, char *argv[])
 
     return 0;
 }
+
