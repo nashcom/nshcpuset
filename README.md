@@ -1,11 +1,24 @@
 # nshcpuset - Windows Efficiency Core Troubleshooting
 
-The follwing information and simple tool has been written to troubleshoot and fix a HCL Notes Client issue I came accross.
-For multiple weeks I have been hunting a performance problem on my Thinkpad T41 with a modern CPU.
+# Introduction
 
-It turns out that modern CPUs with a combination of E-Cores and P-Cores can cause weird performance problems.
+The follwing information and simple tool has been written to troubleshoot and fix a HCL Notes Client issue I came accross.
+For multiple weeks I have been hunting a performance problem on my new Thinkpad T41 with a modern CPU.
+
+It turned out that modern CPUs with a combination of E-Cores and P-Cores can cause weird performance problems.
 Windows "tries" to schedule processes (and acutally threads) on the cores which should best fit the application need.
 But this might not always workout when an application has mixed a mixed workload.
+
+# HCL Notes Development Team is looking into it
+
+The HCL Notes Client Team & Product Management are aware of this very specific problem and are actively looking into a solution.
+This might not hit you depending on how many P-Cores you have and the work-load on your machine.
+But it is good to be aware that this can happen -- not only with Notes but also other applications.
+
+# This might hit other applications
+
+The writeup also describes the background of the problem and how applications can work more smoothly with hybrid CPU architectures.
+My tool is the currently recommended way to troubleshoot and work-around in case you have issues.
 
 Other applications like VMware workstation also had to make adjustments for running with CPUs which have a mix of E-Cores and P-Cores.
 
@@ -15,11 +28,20 @@ You could really watch the client painting Windows in slow motion.
 Windows 11 provides new APIs to allow applications let Windows know that a thread in an application is better suited for a P-Core.
 This functionality would need to be build into the application.
 
-It looks like HCL Notes and other applications don't use those type of hints for Windows.
+The HCL Notes and other applications don't use those new API calls. To be frank I have not heard about those APIs before I started the research.
+I did know about hypbrid CPUs with P-Cores and E-Cores and also did hear about issues on VMware workstation from friend.
+But I never thought that a wrong scheduling on Windows side could slow down an application like this.
 I did some research to find a temporary work-around for my own environment after looking into all other settings, driver updates including GPU driver and settings.
+
+IMHO Microsoft should have raised this in more public to have developers aware -- Like Apple does when they introduce new functionality.
+In this case it is a combination of Intel new CPUs and how Microsoft handles them.
+
+
+# Band Aid
 
 Setting the P-Core affinity for my Notes Basic Client really helped. And the same should work for the Standard Client.
 Below are the details behind the issue and the available APIs.
+
 
 # Hybrid CPUs on Windows: How to Prefer Performance Cores (P-Cores)
 
